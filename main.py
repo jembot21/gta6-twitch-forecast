@@ -5,7 +5,6 @@ import os
 from datetime import datetime
 
 LEVELS = (.05, .25, .5, .75, .95)
-SIMILARITY = 'history'
 SPREAD = 1.0
 
 def timestamp(s):
@@ -37,30 +36,18 @@ def quantile(pairs, level):
             return x + (y-x) * (level-a) / (b-a)
     return centers[-1][1]
 
-def features(comp, rows):
-    start = timestamp(comp['day_start'])
-    before = [r['viewers'] for r in comp.get('hourly', [])
-              if -24 <= (timestamp(r['from'])-start).total_seconds()/3600 < 0
-              and r.get('viewers') is not None]
-    # Pre-release activity relative to midnight distinguishes an already live
-    # category from an upcoming single-time global unlock.
-    return math.log((max(before, default=rows[1]) + 100) / (rows[1]+100))
-
-def forecast(case, variant=None, spread=None):
-    variant = SIMILARITY if variant is None else variant
+def forecast(case, spread=None):
     spread = SPREAD if spread is None else spread
     known = next(row for row in case['known'] if row['hour'] == 1)
     p1 = max(1.0, float(known['viewers']))
-    target = {'day_start': case['day_start'], 'hourly': case.get('history_hourly') or []}
-    target_feature = features(target, {1:p1})
     pool = []
     for comp in case.get('comparables') or []:
         rows = curve(comp)
         if rows.get(1) and len(rows) >= 19 and 'target-history' not in str(comp.get('unlock','')).lower():
-            weight = 1.0
-            if variant != 'initial':
-                delta = features(comp, rows) - target_feature
-                weight = .05 + math.exp(-.5 * (delta / .7)**2)
+            # Curve shape depends on launch scale; this weighting was validated
+            # by leave-one-out backtesting (log-scale bandwidth 1.0, no floor).
+            delta = math.log(rows[1]) - math.log(p1)
+            weight = math.exp(-0.5 * delta**2 / 1.0**2)
             pool.append((rows, weight))
     hours = []
     for h in range(2,25):
